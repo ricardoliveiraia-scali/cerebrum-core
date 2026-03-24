@@ -1,2 +1,2 @@
-from .agente import processar
+from .agente import processar, processar_com_intencao
 from . import leitor

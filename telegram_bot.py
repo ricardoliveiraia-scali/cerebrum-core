@@ -28,7 +28,7 @@ from telegram.ext import (
     filters,
 )
 
-from cerebrum.agente import processar
+from cerebrum.agente import processar_com_intencao
 
 # ---------------------------------------------------------------------------
 # Config
@@ -137,20 +137,31 @@ async def handle_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _processar_e_responder(update: Update, msg, texto: str):
     try:
-        caminhos = processar(texto, verbose=False)
+        resultado = processar_com_intencao(texto, verbose=False)
+        tipo = resultado["tipo"]
 
-        resposta = "✓ Guardado\n\n"
-        for c in caminhos:
-            p = Path(c)
-            # Mostra se foi para Marca Pessoal ou Agency OS
-            if "marca-pessoal" in str(p):
-                mundo = "🧠 Marca Pessoal"
-            elif "agency-os" in str(p):
-                mundo = "⚙️ Agency OS → Supabase"
-            else:
-                mundo = "📥 Inbox"
-            categoria = p.parent.name
-            resposta += f"{mundo}\n📁 `{categoria}/`\n📄 `{p.name}`\n\n"
+        if tipo == "guardar":
+            resposta = "✓ Guardado\n\n"
+            for r in resultado["resultado"]:
+                p = Path(r["caminho"])
+                if r["destino"] == "supabase":
+                    sync_status = "✓" if r["supabase_synced"] else "⚠ offline"
+                    mundo = f"⚙️ Agency OS → Supabase {sync_status}"
+                elif "marca-pessoal" in str(p):
+                    mundo = "🧠 Marca Pessoal"
+                else:
+                    mundo = "📥 Inbox"
+                categoria = p.parent.name
+                resposta += f"{mundo}\n📁 `{categoria}/`\n📄 `{p.name}`\n\n"
+
+        elif tipo == "pergunta":
+            resposta = f"🔍 {resultado['resultado']}"
+
+        elif tipo == "comando":
+            resposta = f"⚡ {resultado['resultado']}"
+
+        else:
+            resposta = "Processado."
 
         await msg.edit_text(resposta, parse_mode="Markdown")
 

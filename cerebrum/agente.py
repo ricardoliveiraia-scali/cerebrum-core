@@ -1,5 +1,5 @@
 """
-Lógica principal do Cerebrum — classificar, estruturar e guardar notas.
+Lógica principal do Cerebrum — classificar, estruturar, guardar e sincronizar.
 """
 
 import os
@@ -61,6 +61,8 @@ TEMPLATE:
 TÍTULO: {titulo}
 DATA: {data}
 
+{perfil_voz}
+
 ---
 
 Regras:
@@ -100,24 +102,43 @@ def estruturar(client: anthropic.Anthropic, texto: str, categoria: dict, titulo:
         conteudo=texto,
     )
 
+    # Injeta perfil de voz para categorias de conteúdo
+    perfil_voz = ""
+    pasta = categoria.get("pasta", "")
+    if "instagram" in pasta or "youtube" in pasta:
+        try:
+            from .perfil_voz import obter_prompt_tom
+            perfil_voz = obter_prompt_tom()
+        except Exception:
+            pass
+
     prompt = ESTRUTURACAO_PROMPT.format(
         input=texto,
         template=template,
         titulo=titulo,
         data=date.today().isoformat(),
+        perfil_voz=perfil_voz,
     )
+
+    system = SYSTEM_PROMPT
+    if perfil_voz:
+        system = SYSTEM_PROMPT + "\n\n" + perfil_voz
 
     resultado = []
     with client.messages.stream(
         model="claude-opus-4-6",
         max_tokens=4096,
-        system=SYSTEM_PROMPT,
+        system=system,
         messages=[{"role": "user", "content": prompt}],
     ) as stream:
         for text in stream.text_stream:
             resultado.append(text)
 
-    return "".join(resultado)
+    conteudo = "".join(resultado)
+    # Remove blocos de código se o modelo os incluir
+    conteudo = re.sub(r'^```(?:markdown)?\n?', '', conteudo)
+    conteudo = re.sub(r'\n?```$', '', conteudo).strip()
+    return conteudo
 
 
 def guardar(conteudo: str, pasta: str, titulo: str) -> str:
@@ -135,15 +156,22 @@ def guardar(conteudo: str, pasta: str, titulo: str) -> str:
     return caminho
 
 
-def processar(texto: str, verbose: bool = False) -> list[str]:
+def processar(texto: str, verbose: bool = False) -> list[dict]:
     """
-    Processa um texto: classifica, estrutura e guarda.
-    Retorna lista de caminhos dos ficheiros criados (pode ser mais de um se múltiplas categorias).
+    Processa um texto: classifica, estrutura, guarda e sync.
+    Retorna lista de dicts com info sobre cada nota criada.
     """
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise EnvironmentError("ANTHROPIC_API_KEY não definida.")
 
     client = anthropic.Anthropic()
+
+    # 0. Atualizar perfil de voz (com texto original bruto)
+    try:
+        from .perfil_voz import atualizar_perfil
+        atualizar_perfil(client, texto)
+    except Exception:
+        pass
 
     # 1. Classificar
     classificacao = classificar(client, texto)
@@ -157,18 +185,75 @@ def processar(texto: str, verbose: bool = False) -> list[str]:
         print(f"→ Motivo:      {classificacao.get('justificacao', '')}")
         print()
 
-    caminhos = []
+    resultados = []
     for chave in multiplas:
         categoria = CATEGORIAS.get(chave, CATEGORIAS["inbox"])
 
         # 2. Estruturar
         conteudo = estruturar(client, texto, categoria, titulo)
 
-        # 3. Guardar
+        # 3. Guardar no vault (sempre — serve de backup)
         caminho = guardar(conteudo, categoria["pasta"], titulo)
-        caminhos.append(caminho)
+
+        resultado = {
+            "caminho": caminho,
+            "categoria": chave,
+            "destino": categoria.get("destino", "vault"),
+            "supabase_synced": False,
+        }
+
+        # 4. Sync para Supabase (se for agency-os)
+        if categoria.get("destino") == "supabase" and categoria.get("tabela"):
+            try:
+                from .supabase_sync import sync_para_supabase
+                sync_para_supabase(client, conteudo, categoria["tabela"])
+                resultado["supabase_synced"] = True
+                if verbose:
+                    print(f"  ↗ Synced: {categoria['tabela']}")
+            except Exception as e:
+                if verbose:
+                    print(f"  ⚠ Supabase: {e}")
+
+        resultados.append(resultado)
 
         if verbose:
             print(f"✓ Guardado: {caminho}")
 
-    return caminhos
+    return resultados
+
+
+def processar_com_intencao(texto: str, verbose: bool = False) -> dict:
+    """
+    Entry point com deteção de intenção.
+    Retorna: {"tipo": "guardar|pergunta|comando", "resultado": ...}
+    """
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise EnvironmentError("ANTHROPIC_API_KEY não definida.")
+
+    client = anthropic.Anthropic()
+
+    # 1. Detetar intenção
+    from .intencoes import detetar_intencao
+    intencao = detetar_intencao(client, texto)
+    tipo = intencao.get("intencao", "guardar")
+
+    if verbose:
+        print(f"→ Intenção: {tipo} ({intencao.get('detalhe', '')})")
+
+    if tipo == "guardar":
+        resultados = processar(texto, verbose=verbose)
+        return {"tipo": "guardar", "resultado": resultados}
+
+    elif tipo == "pergunta":
+        from .consultas import responder_pergunta
+        resposta = responder_pergunta(client, texto)
+        return {"tipo": "pergunta", "resultado": resposta}
+
+    elif tipo == "comando":
+        from .comandos import executar_comando
+        resposta = executar_comando(texto, intencao.get("skill"))
+        return {"tipo": "comando", "resultado": resposta}
+
+    # Fallback
+    resultados = processar(texto, verbose=verbose)
+    return {"tipo": "guardar", "resultado": resultados}
