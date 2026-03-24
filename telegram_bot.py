@@ -16,7 +16,7 @@ import sys
 import asyncio
 import logging
 import tempfile
-import subprocess
+import httpx
 from pathlib import Path
 
 from telegram import Update
@@ -43,24 +43,26 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Transcrição
+# Transcrição via API Whisper (OpenAI) — leve, sem PyTorch
 # ---------------------------------------------------------------------------
 
-def transcrever_audio(caminho: str) -> str:
-    """Transcreve áudio com Whisper (CLI local)."""
-    try:
-        resultado = subprocess.run(
-            ["/Users/ricardooliveira/Library/Python/3.9/bin/whisper", caminho, "--language", "pt", "--model", "base", "--output_format", "txt", "--output_dir", "/tmp"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        txt_path = Path("/tmp") / (Path(caminho).stem + ".txt")
-        if txt_path.exists():
-            return txt_path.read_text(encoding="utf-8").strip()
-        raise RuntimeError(resultado.stderr)
-    except FileNotFoundError:
-        raise RuntimeError("Whisper não instalado. Corre: pip install openai-whisper")
+async def transcrever_audio_api(caminho: str) -> str:
+    """Transcreve áudio via Anthropic/OpenAI Whisper API (HTTP)."""
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY não definida — transcrição por API indisponível.")
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        with open(caminho, "rb") as f:
+            resp = await client.post(
+                "https://api.openai.com/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                data={"model": "whisper-1", "language": "pt"},
+                files={"file": (Path(caminho).name, f, "audio/ogg")},
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Whisper API erro {resp.status_code}: {resp.text}")
+        return resp.json().get("text", "").strip()
 
 
 # ---------------------------------------------------------------------------
@@ -77,45 +79,24 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_voz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Recebe mensagem de voz — usa transcrição do Telegram se disponível, senão Whisper."""
+    """Recebe mensagem de voz — descarrega e transcreve via Whisper API."""
     msg = await update.message.reply_text("A transcrever...")
 
     voice = update.message.voice or update.message.audio
     transcricao = None
 
-    # Tenta usar a transcrição já feita pelo Telegram
-    if hasattr(update.message, "voice") and update.message.voice:
-        try:
-            result = await context.bot.transcribe_audio(
-                chat_id=update.message.chat_id,
-                message_id=update.message.message_id,
-            )
-            # Aguarda até a transcrição estar pronta (max 30s)
-            for _ in range(15):
-                if result.text:
-                    transcricao = result.text
-                    break
-                await asyncio.sleep(2)
-                result = await context.bot.transcribe_audio(
-                    chat_id=update.message.chat_id,
-                    message_id=update.message.message_id,
-                )
-        except Exception:
-            pass  # fallback para Whisper
-
-    # Fallback: Whisper local
-    if not transcricao:
-        ficheiro = await context.bot.get_file(voice.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
-            await ficheiro.download_to_drive(tmp.name)
-            caminho_audio = tmp.name
-        try:
-            transcricao = transcrever_audio(caminho_audio)
-        except RuntimeError as e:
-            await msg.edit_text(f"Erro na transcrição: {e}")
-            return
-        finally:
-            os.unlink(caminho_audio)
+    # Descarrega o áudio e transcreve via API
+    ficheiro = await context.bot.get_file(voice.file_id)
+    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+        await ficheiro.download_to_drive(tmp.name)
+        caminho_audio = tmp.name
+    try:
+        transcricao = await transcrever_audio_api(caminho_audio)
+    except RuntimeError as e:
+        await msg.edit_text(f"Erro na transcrição: {e}")
+        return
+    finally:
+        os.unlink(caminho_audio)
 
     if not transcricao or not transcricao.strip():
         await msg.edit_text("Não consegui perceber o áudio. Tenta de novo.")
