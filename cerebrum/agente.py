@@ -74,14 +74,18 @@ Regras:
 """
 
 
-def classificar(client: anthropic.Anthropic, texto: str) -> dict:
+def classificar(client: anthropic.Anthropic, texto: str, contexto: str = "") -> dict:
     categorias_desc = "\n".join(
         f'- "{k}": {v["descricao"]}' for k, v in CATEGORIAS.items()
     )
-    prompt = CLASSIFICACAO_PROMPT.format(input=texto, categorias=categorias_desc)
+    input_com_contexto = texto
+    if contexto:
+        input_com_contexto = f"CONTEXTO DA CONVERSA:\n{contexto}\n\nMENSAGEM ATUAL:\n{texto}"
+
+    prompt = CLASSIFICACAO_PROMPT.format(input=input_com_contexto, categorias=categorias_desc)
 
     resposta = client.messages.create(
-        model="claude-opus-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=512,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
@@ -156,7 +160,7 @@ def guardar(conteudo: str, pasta: str, titulo: str) -> str:
     return caminho
 
 
-def processar(texto: str, verbose: bool = False) -> list[dict]:
+def processar(texto: str, contexto: str = "", verbose: bool = False) -> list[dict]:
     """
     Processa um texto: classifica, estrutura, guarda e sync.
     Retorna lista de dicts com info sobre cada nota criada.
@@ -174,7 +178,7 @@ def processar(texto: str, verbose: bool = False) -> list[dict]:
         pass
 
     # 1. Classificar
-    classificacao = classificar(client, texto)
+    classificacao = classificar(client, texto, contexto=contexto)
     titulo = classificacao.get("titulo", f"nota-{date.today().isoformat()}")
     multiplas = classificacao.get("multiplas", [classificacao.get("categoria", "inbox")])
 
@@ -214,6 +218,13 @@ def processar(texto: str, verbose: bool = False) -> list[dict]:
                 if verbose:
                     print(f"  ⚠ Supabase: {e}")
 
+        # 5. Guardar embedding para pesquisa semântica
+        try:
+            from .embeddings import guardar_embedding
+            guardar_embedding(caminho, chave, conteudo)
+        except Exception:
+            pass
+
         resultados.append(resultado)
 
         if verbose:
@@ -222,7 +233,7 @@ def processar(texto: str, verbose: bool = False) -> list[dict]:
     return resultados
 
 
-def processar_com_intencao(texto: str, verbose: bool = False) -> dict:
+def processar_com_intencao(texto: str, contexto: str = "", verbose: bool = False) -> dict:
     """
     Entry point com deteção de intenção.
     Retorna: {"tipo": "guardar|pergunta|comando", "resultado": ...}
@@ -232,28 +243,31 @@ def processar_com_intencao(texto: str, verbose: bool = False) -> dict:
 
     client = anthropic.Anthropic()
 
-    # 1. Detetar intenção
+    # 1. Detetar intenção (com contexto de sessão)
     from .intencoes import detetar_intencao
-    intencao = detetar_intencao(client, texto)
+    texto_com_contexto = texto
+    if contexto:
+        texto_com_contexto = f"{contexto}\n\n[MENSAGEM ATUAL]: {texto}"
+    intencao = detetar_intencao(client, texto_com_contexto)
     tipo = intencao.get("intencao", "guardar")
 
     if verbose:
         print(f"→ Intenção: {tipo} ({intencao.get('detalhe', '')})")
 
     if tipo == "guardar":
-        resultados = processar(texto, verbose=verbose)
+        resultados = processar(texto, contexto=contexto, verbose=verbose)
         return {"tipo": "guardar", "resultado": resultados}
 
     elif tipo == "pergunta":
         from .consultas import responder_pergunta
-        resposta = responder_pergunta(client, texto)
+        resposta = responder_pergunta(client, texto, contexto=contexto)
         return {"tipo": "pergunta", "resultado": resposta}
 
     elif tipo == "comando":
         from .comandos import executar_comando
-        resposta = executar_comando(texto, intencao.get("skill"))
+        resposta = executar_comando(client, texto, intencao.get("skill"))
         return {"tipo": "comando", "resultado": resposta}
 
     # Fallback
-    resultados = processar(texto, verbose=verbose)
+    resultados = processar(texto, contexto=contexto, verbose=verbose)
     return {"tipo": "guardar", "resultado": resultados}
