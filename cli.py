@@ -10,7 +10,7 @@ Uso:
 
 import sys
 import os
-from cerebrum.agente import processar
+from cerebrum.agente import processar_com_intencao
 
 
 def backfill_embeddings():
@@ -71,7 +71,20 @@ def main():
         sys.exit(1)
 
     print()
-    processar(texto, verbose=True)
+    resultado = processar_com_intencao(texto, verbose=True)
+    tipo = resultado["tipo"]
+
+    if tipo == "guardar":
+        for r in resultado["resultado"]:
+            print(f"✓ {r['caminho']}")
+            if r.get("supabase_synced"):
+                print("  ↗ Supabase")
+            if r.get("lyra_synced"):
+                print("  ↗ Lyra")
+    elif tipo == "pergunta":
+        print(f"\n{resultado['resultado']}")
+    elif tipo == "comando":
+        print(f"\n{resultado['resultado']}")
 
 
 if __name__ == "__main__":
