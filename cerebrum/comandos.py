@@ -217,7 +217,26 @@ def _skill_carrossel(client: anthropic.Anthropic, texto: str) -> str:
     # Guardar na pasta instagram
     caminho = guardar(conteudo, "marca-pessoal/instagram", f"carrossel-{date.today().isoformat()}")
 
-    return f"🎠 Carrossel gerado!\n\n{conteudo}\n\n📄 Guardado em `{os.path.basename(caminho)}`"
+    # Sync para Lyra (content_pieces)
+    lyra_msg = ""
+    try:
+        from .supabase_sync import sync_content_piece
+        slides = conteudo.count("---") + 1
+        sync_content_piece(
+            titulo=f"Carrossel — {date.today().isoformat()}",
+            brief=texto,
+            channel="carousel",
+            sub_agent="carrosseis",
+            nota_path=caminho,
+            categoria="instagram",
+            copy_preview=conteudo,
+            slides=slides,
+        )
+        lyra_msg = "\n↗ Enviado para Lyra (para revisão)"
+    except Exception:
+        pass
+
+    return f"🎠 Carrossel gerado!\n\n{conteudo}\n\n📄 Guardado em `{os.path.basename(caminho)}`{lyra_msg}"
 
 
 def _skill_guiao(client: anthropic.Anthropic, texto: str) -> str:
@@ -233,7 +252,24 @@ def _skill_guiao(client: anthropic.Anthropic, texto: str) -> str:
 
     caminho = guardar(conteudo, "marca-pessoal/youtube", f"guiao-{date.today().isoformat()}")
 
-    return f"🎬 Guião gerado!\n\n{conteudo}\n\n📄 Guardado em `{os.path.basename(caminho)}`"
+    # Sync para Lyra (content_pieces)
+    lyra_msg = ""
+    try:
+        from .supabase_sync import sync_content_piece
+        sync_content_piece(
+            titulo=f"Guião — {date.today().isoformat()}",
+            brief=texto,
+            channel="reel",
+            sub_agent="reels",
+            nota_path=caminho,
+            categoria="youtube",
+            copy_preview=conteudo,
+        )
+        lyra_msg = "\n↗ Enviado para Lyra (para revisão)"
+    except Exception:
+        pass
+
+    return f"🎬 Guião gerado!\n\n{conteudo}\n\n📄 Guardado em `{os.path.basename(caminho)}`{lyra_msg}"
 
 
 def _skill_proposta(client: anthropic.Anthropic, texto: str) -> str:

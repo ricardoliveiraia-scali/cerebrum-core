@@ -173,7 +173,10 @@ async def _processar_e_responder(update: Update, msg, texto: str):
                 else:
                     mundo = "📥 Inbox"
                 categoria = p.parent.name
-                resposta += f"{mundo}\n📁 `{categoria}/`\n📄 `{p.name}`\n\n"
+                resposta += f"{mundo}\n📁 `{categoria}/`\n📄 `{p.name}`\n"
+                if r.get("lyra_synced"):
+                    resposta += "↗ Enviado para Lyra\n"
+                resposta += "\n"
 
         elif tipo == "pergunta":
             resposta = f"🔍 {resultado['resultado']}"

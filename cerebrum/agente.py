@@ -38,16 +38,21 @@ CATEGORIAS DISPONÍVEIS:
 
 Responde APENAS com JSON válido neste formato:
 {{
-  "categoria": "<chave_da_categoria>",
+  "categoria": "<chave_principal>",
   "titulo": "<título curto que soa natural, máximo 60 chars>",
   "confianca": "<alta/media/baixa>",
   "justificacao": "<1 frase>",
-  "multiplas": ["<categoria1>", "<categoria2>"]
+  "multiplas": ["<categoria1>"]
 }}
 
-O campo "multiplas" lista todas as categorias relevantes (pode ser só uma).
-Uma nota pode pertencer a ambos os mundos (ex: uma ideia de negócio que também serve para Instagram).
-Em caso de dúvida usa "inbox".
+Regras para o campo "multiplas":
+- Por defeito tem APENAS 1 categoria — a principal.
+- Só usa 2 categorias se o conteúdo for EXPLICITAMENTE sobre os dois temas (ex: uma reflexão pessoal que o Ricardo diz claramente que quer usar no Instagram).
+- NUNCA uses mais de 2 categorias.
+- NUNCA mistures marca-pessoal com agency-os na mesma nota. São mundos separados.
+- agency-os só recebe: clientes, projetos, reunioes, financeiro — apenas quando o input é claramente operacional da agência.
+- marca-pessoal recebe tudo o resto: pensamentos, ideias de conteúdo, IA, jornada de empreendedor.
+- Em caso de dúvida usa "inbox".
 """
 
 ESTRUTURACAO_PROMPT = """Preenche o template com base no input. Mantém o tom e a forma de falar do Ricardo.
@@ -224,6 +229,26 @@ def processar(texto: str, contexto: str = "", verbose: bool = False) -> list[dic
             guardar_embedding(caminho, chave, conteudo)
         except Exception:
             pass
+
+        # 6. Se for conteúdo (instagram/youtube), sync para Lyra
+        if chave in ("instagram", "youtube"):
+            try:
+                from .supabase_sync import sync_content_piece, _mapear_canal
+                channel, sub_agent = _mapear_canal(chave, conteudo)
+                sync_content_piece(
+                    titulo=titulo,
+                    brief=texto,
+                    channel=channel,
+                    sub_agent=sub_agent,
+                    nota_path=caminho,
+                    categoria=chave,
+                )
+                resultado["lyra_synced"] = True
+                if verbose:
+                    print(f"  ↗ Lyra: {channel}")
+            except Exception as e:
+                if verbose:
+                    print(f"  ⚠ Lyra: {e}")
 
         resultados.append(resultado)
 
