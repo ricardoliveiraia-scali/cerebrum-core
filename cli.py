@@ -13,10 +13,43 @@ import os
 from cerebrum.agente import processar
 
 
+def backfill_embeddings():
+    """Gera embeddings para todas as notas existentes no vault."""
+    from cerebrum.leitor import listar, ler
+    from cerebrum.embeddings import guardar_embedding
+
+    notas = listar(limite=500)
+    total = len(notas)
+    sucesso = 0
+    falha = 0
+
+    print(f"Backfill: {total} notas encontradas no vault.")
+
+    for i, nota in enumerate(notas, 1):
+        try:
+            conteudo = ler(nota["caminho"])
+            guardar_embedding(nota["caminho"], nota["categoria"], conteudo)
+            sucesso += 1
+            print(f"  [{i}/{total}] ✓ {nota['ficheiro']}")
+        except Exception as e:
+            falha += 1
+            print(f"  [{i}/{total}] ✗ {nota['ficheiro']}: {e}")
+
+    print(f"\nBackfill completo: {sucesso} ok, {falha} erros.")
+
+
 def main():
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("Erro: define ANTHROPIC_API_KEY.", file=sys.stderr)
         sys.exit(1)
+
+    # Backfill embeddings
+    if len(sys.argv) > 1 and sys.argv[1] == "backfill":
+        if not os.environ.get("OPENAI_API_KEY"):
+            print("Erro: define OPENAI_API_KEY para gerar embeddings.", file=sys.stderr)
+            sys.exit(1)
+        backfill_embeddings()
+        return
 
     # Texto como argumento direto
     if len(sys.argv) > 1:

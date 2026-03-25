@@ -1,24 +1,28 @@
 """
 Embeddings — pesquisa semântica via Supabase pgvector.
 
-Usa a API de embeddings do Voyage (Anthropic) para gerar vetores
-e guarda-os no Supabase para pesquisa por similaridade.
+Usa OpenAI text-embedding-3-small (1536 dimensões) via httpx.
+Requer OPENAI_API_KEY no ambiente.
 
-Tabela necessária no Supabase:
+SQL necessário no Supabase:
+
+    CREATE EXTENSION IF NOT EXISTS vector;
+
     CREATE TABLE IF NOT EXISTS note_embeddings (
         id BIGSERIAL PRIMARY KEY,
         nota_path TEXT UNIQUE NOT NULL,
         categoria TEXT,
         conteudo TEXT,
-        embedding VECTOR(1024),
+        embedding VECTOR(1536),
         created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    CREATE INDEX ON note_embeddings
-    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+    CREATE INDEX IF NOT EXISTS note_embeddings_embedding_idx
+    ON note_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 10);
 
-    -- Função de pesquisa
-    CREATE OR REPLACE FUNCTION match_notes(query_embedding VECTOR(1024), match_count INT DEFAULT 5)
+    CREATE OR REPLACE FUNCTION match_notes(
+        query_embedding VECTOR(1536), match_count INT DEFAULT 5
+    )
     RETURNS TABLE(id BIGINT, nota_path TEXT, categoria TEXT, conteudo TEXT, similarity FLOAT)
     LANGUAGE plpgsql AS $$
     BEGIN
@@ -33,37 +37,38 @@ Tabela necessária no Supabase:
 """
 
 import os
+import logging
 import httpx
-import anthropic
 from .supabase_sync import get_supabase_client
+
+log = logging.getLogger(__name__)
 
 
 def gerar_embedding(texto: str) -> list[float]:
-    """Gera embedding via API Voyage (Anthropic)."""
-    client = anthropic.Anthropic()
+    """Gera embedding via OpenAI text-embedding-3-small."""
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return []
 
-    # Usa a API de embeddings da Voyage via Anthropic
     try:
         response = httpx.post(
-            "https://api.voyageai.com/v1/embeddings",
+            "https://api.openai.com/v1/embeddings",
             headers={
-                "Authorization": f"Bearer {os.environ.get('VOYAGE_API_KEY', '')}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": "voyage-3-lite",
-                "input": [texto[:8000]],
-                "input_type": "document",
+                "model": "text-embedding-3-small",
+                "input": texto[:8000],
             },
             timeout=30,
         )
         if response.status_code == 200:
             return response.json()["data"][0]["embedding"]
-    except Exception:
-        pass
+        log.warning(f"OpenAI embeddings erro {response.status_code}")
+    except Exception as e:
+        log.warning(f"Erro ao gerar embedding: {e}")
 
-    # Fallback: embedding simples com Anthropic (hash do texto)
-    # Se não tiver Voyage, usa uma aproximação
     return []
 
 
@@ -81,8 +86,8 @@ def guardar_embedding(nota_path: str, categoria: str, conteudo: str):
             "conteudo": conteudo[:5000],
             "embedding": embedding,
         }, on_conflict="nota_path").execute()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"Erro ao guardar embedding: {e}")
 
 
 def pesquisar_semantico(query: str, limite: int = 5) -> list[dict]:
@@ -98,5 +103,6 @@ def pesquisar_semantico(query: str, limite: int = 5) -> list[dict]:
             "match_count": limite,
         }).execute()
         return resultado.data if resultado.data else []
-    except Exception:
+    except Exception as e:
+        log.warning(f"Erro na pesquisa semântica: {e}")
         return []

@@ -37,6 +37,8 @@ CARROSSEL_PROMPT = """Cria um carrossel de Instagram com base neste input do Ric
 
 INPUT: {input}
 
+{contexto_notas}
+
 ---
 
 Formato do carrossel (8-10 slides):
@@ -63,6 +65,8 @@ Tom: direto, informal, português europeu, sem corporativês.
 GUIAO_PROMPT = """Cria um guião de vídeo YouTube com base neste input.
 
 INPUT: {input}
+
+{contexto_notas}
 
 ---
 
@@ -95,6 +99,8 @@ Tom: conversacional, como se estivesse a falar com um amigo. Português europeu.
 PROPOSTA_PROMPT = """Gera uma proposta/orçamento profissional com base neste input.
 
 INPUT: {input}
+
+{contexto_notas}
 
 ---
 
@@ -203,13 +209,61 @@ def _obter_perfil_voz() -> str:
         return ""
 
 
+def _obter_contexto_relevante(texto: str, limite: int = 5) -> str:
+    """Pesquisa notas relacionadas para enriquecer a geração de conteúdo."""
+    notas = []
+
+    # 1. Pesquisa semântica
+    try:
+        from .embeddings import pesquisar_semantico
+        resultados = pesquisar_semantico(texto, limite=limite)
+        if resultados:
+            for r in resultados:
+                categoria = r.get("categoria", "?")
+                conteudo = r.get("conteudo", "")[:400]
+                notas.append(f"[{categoria}] {conteudo}")
+    except Exception:
+        pass
+
+    # 2. Fallback: pesquisa por texto no vault
+    if not notas:
+        try:
+            from .leitor import buscar
+            palavras = [p for p in texto.split() if len(p) > 3]
+            for palavra in palavras[:3]:
+                resultados = buscar(texto=palavra, limite=limite)
+                if resultados:
+                    for r in resultados:
+                        categoria = r.get("categoria", "?")
+                        conteudo = r.get("conteudo", "")[:400]
+                        notas.append(f"[{categoria}] {conteudo}")
+                    break
+        except Exception:
+            pass
+
+    if not notas:
+        return ""
+
+    notas_unicas = list(dict.fromkeys(notas))[:limite]
+    return "\n---\n".join(notas_unicas)
+
+
+def _formatar_contexto(contexto_raw: str) -> str:
+    """Formata contexto de notas para injeção no prompt."""
+    if not contexto_raw:
+        return ""
+    return f"""NOTAS RELACIONADAS DO VAULT DO RICARDO (usa como inspiração e fonte, não copies literalmente):
+{contexto_raw}"""
+
+
 def _skill_carrossel(client: anthropic.Anthropic, texto: str) -> str:
     perfil = _obter_perfil_voz()
+    contexto = _formatar_contexto(_obter_contexto_relevante(texto))
     resposta = client.messages.create(
         model="claude-opus-4-6",
         max_tokens=4096,
         messages=[{"role": "user", "content": CARROSSEL_PROMPT.format(
-            input=texto, perfil_voz=perfil
+            input=texto, perfil_voz=perfil, contexto_notas=contexto
         )}],
     )
     conteudo = resposta.content[0].text.strip()
@@ -241,11 +295,12 @@ def _skill_carrossel(client: anthropic.Anthropic, texto: str) -> str:
 
 def _skill_guiao(client: anthropic.Anthropic, texto: str) -> str:
     perfil = _obter_perfil_voz()
+    contexto = _formatar_contexto(_obter_contexto_relevante(texto))
     resposta = client.messages.create(
         model="claude-opus-4-6",
         max_tokens=4096,
         messages=[{"role": "user", "content": GUIAO_PROMPT.format(
-            input=texto, perfil_voz=perfil
+            input=texto, perfil_voz=perfil, contexto_notas=contexto
         )}],
     )
     conteudo = resposta.content[0].text.strip()
@@ -273,11 +328,12 @@ def _skill_guiao(client: anthropic.Anthropic, texto: str) -> str:
 
 
 def _skill_proposta(client: anthropic.Anthropic, texto: str) -> str:
+    contexto = _formatar_contexto(_obter_contexto_relevante(texto))
     resposta = client.messages.create(
         model="claude-opus-4-6",
         max_tokens=4096,
         messages=[{"role": "user", "content": PROPOSTA_PROMPT.format(
-            input=texto, data=date.today().isoformat()
+            input=texto, data=date.today().isoformat(), contexto_notas=contexto
         )}],
     )
     conteudo = resposta.content[0].text.strip()
