@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Supabase Sync — envia dados estruturados para o Agency OS (Supabase).
 

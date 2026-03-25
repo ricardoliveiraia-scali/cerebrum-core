@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Lógica principal do Cerebrum — classificar, estruturar, guardar e sincronizar.
 """

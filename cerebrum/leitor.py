@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Leitor do vault — para outros sistemas consultarem o conteúdo do Cerebrum.
 """

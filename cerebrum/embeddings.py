@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Embeddings — pesquisa semântica via Supabase pgvector.
 
