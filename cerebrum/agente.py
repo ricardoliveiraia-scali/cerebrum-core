@@ -133,7 +133,7 @@ def estruturar(client: anthropic.Anthropic, texto: str, categoria: dict, titulo:
 
     resultado = []
     with client.messages.stream(
-        model="claude-opus-4-6",
+        model="claude-sonnet-4-6",
         max_tokens=4096,
         system=system,
         messages=[{"role": "user", "content": prompt}],
@@ -148,7 +148,7 @@ def estruturar(client: anthropic.Anthropic, texto: str, categoria: dict, titulo:
     return conteudo
 
 
-def guardar(conteudo: str, pasta: str, titulo: str) -> str:
+def guardar(conteudo: str, pasta: str, titulo: str, categoria: str = "inbox") -> str:
     destino = os.path.join(VAULT_ROOT, pasta)
     os.makedirs(destino, exist_ok=True)
 
@@ -159,6 +159,19 @@ def guardar(conteudo: str, pasta: str, titulo: str) -> str:
 
     with open(caminho, "w", encoding="utf-8") as f:
         f.write(conteudo)
+
+    # Persistir no Supabase (vault local é efémero no Railway)
+    try:
+        from .supabase_sync import get_supabase_client
+        sb = get_supabase_client()
+        sb.table("vault_notes").insert({
+            "path": caminho,
+            "categoria": categoria,
+            "titulo": titulo,
+            "conteudo": conteudo,
+        }).execute()
+    except Exception:
+        pass
 
     return caminho
 
@@ -196,8 +209,8 @@ def processar(texto: str, contexto: str = "", verbose: bool = False) -> list[dic
     # 2. Estruturar
     conteudo = estruturar(client, texto, categoria, titulo)
 
-    # 3. Guardar no vault (sempre)
-    caminho = guardar(conteudo, categoria["pasta"], titulo)
+    # 3. Guardar no vault (sempre) + persistir no Supabase
+    caminho = guardar(conteudo, categoria["pasta"], titulo, categoria=chave)
 
     resultado = {
         "caminho": caminho,

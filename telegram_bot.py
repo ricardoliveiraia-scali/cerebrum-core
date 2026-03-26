@@ -34,7 +34,7 @@ from cerebrum.agente import processar_com_intencao
 # Config
 # ---------------------------------------------------------------------------
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8608115531:AAGgC5x3jvATlnY0eTLFaK5rN_Li4yTyxXY")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 
 # IDs autorizados (separados por vírgula). Se vazio, aceita todos.
 ALLOWED_USERS = os.environ.get("ALLOWED_USERS", "")
@@ -138,7 +138,10 @@ async def handle_voz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text("Não consegui perceber o áudio. Tenta de novo.")
         return
 
-    await msg.edit_text(f"Transcrito:\n\n_{transcricao}_\n\nA processar...", parse_mode="Markdown")
+    try:
+        await msg.edit_text(f"Transcrito:\n\n_{transcricao}_\n\nA processar...", parse_mode="Markdown")
+    except Exception:
+        await msg.edit_text(f"Transcrito:\n\n{transcricao}\n\nA processar...")
     await _processar_e_responder(update, msg, transcricao)
 
 
@@ -188,7 +191,10 @@ async def _processar_e_responder(update: Update, msg, texto: str):
             resposta = "Processado."
 
         guardar_sessao(update.effective_chat.id, "cerebrum", resposta[:200])
-        await msg.edit_text(resposta, parse_mode="Markdown")
+        try:
+            await msg.edit_text(resposta, parse_mode="Markdown")
+        except Exception:
+            await msg.edit_text(resposta)
 
     except Exception as e:
         log.exception("Erro ao processar")
@@ -222,9 +228,14 @@ async def enviar_resumo_diario(context: ContextTypes.DEFAULT_TYPE):
 # ---------------------------------------------------------------------------
 
 def main():
+    if not TELEGRAM_TOKEN:
+        print("Erro: define TELEGRAM_TOKEN.", file=sys.stderr)
+        sys.exit(1)
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("Erro: define ANTHROPIC_API_KEY.", file=sys.stderr)
         sys.exit(1)
+    if not ALLOWED_USER_IDS:
+        log.warning("⚠ ALLOWED_USERS não definido — bot acessível a qualquer pessoa!")
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
