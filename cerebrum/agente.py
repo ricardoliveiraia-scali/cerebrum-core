@@ -21,34 +21,35 @@ Regras fundamentais:
 - Mantém a energia e a personalidade do input original
 - Estruturas, mas não engessas — o conteúdo tem de continuar a soar a ele"""
 
-CLASSIFICACAO_PROMPT = """Analisa o seguinte input e classifica-o numa das categorias disponíveis.
+TRIAGEM_PROMPT = """Analisa a mensagem do Ricardo e faz a triagem completa num só passo.
 
-O Cerebrum tem dois mundos:
-- MARCA PESSOAL (pessoal, empreendedor, ia, instagram, youtube) → vault local
-- AGENCY OS (cliente, projeto, reuniao, financeiro) → sync para Supabase
-
-INPUT:
+MENSAGEM:
 {input}
-
----
 
 CATEGORIAS DISPONÍVEIS:
 {categorias}
 
 ---
 
-Responde APENAS com JSON válido neste formato:
+Responde APENAS com JSON válido:
 {{
-  "categoria": "<chave_principal>",
-  "titulo": "<título curto que soa natural, máximo 60 chars>",
+  "intencao": "guardar|pergunta|comando",
+  "categoria": "<chave da categoria, só se intencao=guardar>",
+  "titulo": "<título curto natural, máximo 60 chars, só se intencao=guardar>",
+  "skill": "<nome da skill se intencao=comando, senão null>",
   "confianca": "<alta/media/baixa>",
   "justificacao": "<1 frase>"
 }}
 
-Regras:
+Regras de intenção:
+- "guardar": nota, ideia, reflexão, resumo, briefing, algo que aconteceu — algo para GUARDAR
+- "pergunta": quer SABER algo ("quanto faturei?", "quem é o cliente X?")
+- "comando": quer FAZER algo ("cria carrossel", "gera proposta")
+
+Regras de categoria (só para intencao=guardar):
 - Escolhe APENAS 1 categoria — a mais relevante.
 - NUNCA mistures marca-pessoal com agency-os. São mundos separados.
-- agency-os só recebe: clientes, projetos, reunioes, financeiro — apenas quando o input é claramente operacional da agência.
+- agency-os só recebe: clientes, projetos, reunioes, financeiro — apenas quando é claramente operacional da agência.
 - marca-pessoal recebe tudo o resto: pensamentos, ideias de conteúdo, IA, jornada de empreendedor.
 - Em caso de dúvida usa "inbox".
 """
@@ -77,7 +78,8 @@ Regras:
 """
 
 
-def classificar(client: anthropic.Anthropic, texto: str, contexto: str = "") -> dict:
+def triar(client: anthropic.Anthropic, texto: str, contexto: str = "") -> dict:
+    """Triagem num só call: intenção + categoria + título."""
     categorias_desc = "\n".join(
         f'- "{k}": {v["descricao"]}' for k, v in CATEGORIAS.items()
     )
@@ -85,7 +87,7 @@ def classificar(client: anthropic.Anthropic, texto: str, contexto: str = "") -> 
     if contexto:
         input_com_contexto = f"CONTEXTO DA CONVERSA:\n{contexto}\n\nMENSAGEM ATUAL:\n{texto}"
 
-    prompt = CLASSIFICACAO_PROMPT.format(input=input_com_contexto, categorias=categorias_desc)
+    prompt = TRIAGEM_PROMPT.format(input=input_com_contexto, categorias=categorias_desc)
 
     resposta = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -176,40 +178,47 @@ def guardar(conteudo: str, pasta: str, titulo: str, categoria: str = "inbox") ->
     return caminho
 
 
-def processar(texto: str, contexto: str = "", verbose: bool = False) -> list[dict]:
-    """
-    Processa um texto: classifica, estrutura, guarda e sync.
-    Retorna lista de dicts com info sobre cada nota criada.
-    """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise EnvironmentError("ANTHROPIC_API_KEY não definida.")
+def _guardar_nota(client: anthropic.Anthropic, texto: str, triagem: dict,
+                   contexto: str = "", verbose: bool = False) -> list[dict]:
+    """Estrutura, guarda e sincroniza uma nota já triada."""
 
-    client = anthropic.Anthropic()
-
-    # 0. Atualizar perfil de voz (com texto original bruto)
+    # 0. Atualizar perfil de voz
     try:
         from .perfil_voz import atualizar_perfil
         atualizar_perfil(client, texto)
     except Exception:
         pass
 
-    # 1. Classificar
-    classificacao = classificar(client, texto, contexto=contexto)
-    titulo = classificacao.get("titulo", f"nota-{date.today().isoformat()}")
-    chave = classificacao.get("categoria", "inbox")
+    titulo = triagem.get("titulo", f"nota-{date.today().isoformat()}")
+    chave = triagem.get("categoria", "inbox")
     categoria = CATEGORIAS.get(chave, CATEGORIAS["inbox"])
 
     if verbose:
         print(f"→ Categoria:   {chave}")
         print(f"→ Título:      {titulo}")
-        print(f"→ Confiança:   {classificacao.get('confianca', '?')}")
-        print(f"→ Motivo:      {classificacao.get('justificacao', '')}")
+        print(f"→ Confiança:   {triagem.get('confianca', '?')}")
+        print(f"→ Motivo:      {triagem.get('justificacao', '')}")
         print()
+
+    # 1. Verificar duplicado (mesmo título + mesma data)
+    try:
+        from .supabase_sync import get_supabase_client
+        sb = get_supabase_client()
+        hoje = date.today().isoformat()
+        existente = sb.table("vault_notes").select("id").eq("titulo", titulo).gte(
+            "created_at", f"{hoje}T00:00:00"
+        ).limit(1).execute()
+        if existente.data:
+            if verbose:
+                print(f"⚠ Duplicado: já existe nota '{titulo}' de hoje")
+            return [{"caminho": "", "categoria": chave, "destino": "duplicado", "supabase_synced": False}]
+    except Exception:
+        pass
 
     # 2. Estruturar
     conteudo = estruturar(client, texto, categoria, titulo)
 
-    # 3. Guardar no vault (sempre) + persistir no Supabase
+    # 3. Guardar no vault + Supabase
     caminho = guardar(conteudo, categoria["pasta"], titulo, categoria=chave)
 
     resultado = {
@@ -263,7 +272,7 @@ def processar(texto: str, contexto: str = "", verbose: bool = False) -> list[dic
 
 def processar_com_intencao(texto: str, contexto: str = "", verbose: bool = False) -> dict:
     """
-    Entry point com deteção de intenção.
+    Entry point principal — triagem + execução num fluxo só.
     Retorna: {"tipo": "guardar|pergunta|comando", "resultado": ...}
     """
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -271,19 +280,16 @@ def processar_com_intencao(texto: str, contexto: str = "", verbose: bool = False
 
     client = anthropic.Anthropic()
 
-    # 1. Detetar intenção (com contexto de sessão)
-    from .intencoes import detetar_intencao
-    texto_com_contexto = texto
-    if contexto:
-        texto_com_contexto = f"{contexto}\n\n[MENSAGEM ATUAL]: {texto}"
-    intencao = detetar_intencao(client, texto_com_contexto)
-    tipo = intencao.get("intencao", "guardar")
+    # 1. Triagem: intenção + categoria num só call
+    triagem = triar(client, texto, contexto=contexto)
+    tipo = triagem.get("intencao", "guardar")
 
     if verbose:
-        print(f"→ Intenção: {tipo} ({intencao.get('detalhe', '')})")
+        print(f"→ Intenção: {tipo} ({triagem.get('justificacao', '')})")
 
     if tipo == "guardar":
-        resultados = processar(texto, contexto=contexto, verbose=verbose)
+        # Já temos categoria e título da triagem — saltar classificação
+        resultados = _guardar_nota(client, texto, triagem, contexto=contexto, verbose=verbose)
         return {"tipo": "guardar", "resultado": resultados}
 
     elif tipo == "pergunta":
@@ -293,9 +299,9 @@ def processar_com_intencao(texto: str, contexto: str = "", verbose: bool = False
 
     elif tipo == "comando":
         from .comandos import executar_comando
-        resposta = executar_comando(client, texto, intencao.get("skill"))
+        resposta = executar_comando(client, texto, triagem.get("skill"))
         return {"tipo": "comando", "resultado": resposta}
 
     # Fallback
-    resultados = processar(texto, contexto=contexto, verbose=verbose)
+    resultados = _guardar_nota(client, texto, triagem, contexto=contexto, verbose=verbose)
     return {"tipo": "guardar", "resultado": resultados}

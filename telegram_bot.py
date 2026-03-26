@@ -46,7 +46,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Memória de sessão — últimas mensagens por chat
+# Cache de sessão em memória (carregada do Supabase no primeiro acesso)
 SESSAO: dict[int, list[dict]] = {}
 
 # ---------------------------------------------------------------------------
@@ -83,16 +83,40 @@ def autorizado(update: Update) -> bool:
     return update.effective_user.id in ALLOWED_USER_IDS
 
 
+def _get_supabase():
+    """Retorna cliente Supabase (lazy)."""
+    from cerebrum.supabase_sync import get_supabase_client
+    return get_supabase_client()
+
+
 def guardar_sessao(chat_id: int, role: str, texto: str):
-    """Guarda mensagem na memória de sessão (últimas 20)."""
+    """Guarda mensagem na sessão (memória + Supabase)."""
     if chat_id not in SESSAO:
         SESSAO[chat_id] = []
     SESSAO[chat_id].append({"role": role, "texto": texto})
     SESSAO[chat_id] = SESSAO[chat_id][-20:]
 
+    try:
+        sb = _get_supabase()
+        sb.table("bot_sessions").insert({
+            "chat_id": chat_id, "role": role, "texto": texto[:2000],
+        }).execute()
+    except Exception:
+        pass
+
 
 def obter_contexto_sessao(chat_id: int) -> str:
-    """Devolve as últimas mensagens como contexto."""
+    """Devolve as últimas mensagens como contexto (Supabase se cache vazio)."""
+    if chat_id not in SESSAO:
+        try:
+            sb = _get_supabase()
+            rows = sb.table("bot_sessions").select("role,texto").eq(
+                "chat_id", chat_id
+            ).order("created_at", desc=True).limit(20).execute()
+            SESSAO[chat_id] = [{"role": r["role"], "texto": r["texto"]} for r in reversed(rows.data)]
+        except Exception:
+            SESSAO[chat_id] = []
+
     msgs = SESSAO.get(chat_id, [])
     if not msgs:
         return ""
@@ -165,8 +189,10 @@ async def _processar_e_responder(update: Update, msg, texto: str):
         tipo = resultado["tipo"]
 
         if tipo == "guardar":
-            resposta = "✓ Guardado\n\n"
-            for r in resultado["resultado"]:
+            r = resultado["resultado"][0]
+            if r.get("destino") == "duplicado":
+                resposta = "⚠ Nota duplicada — já guardei isto hoje."
+            else:
                 p = Path(r["caminho"])
                 if r["destino"] == "supabase":
                     sync_status = "✓" if r["supabase_synced"] else "⚠ offline"
@@ -176,10 +202,9 @@ async def _processar_e_responder(update: Update, msg, texto: str):
                 else:
                     mundo = "📥 Inbox"
                 categoria = p.parent.name
-                resposta += f"{mundo}\n📁 `{categoria}/`\n📄 `{p.name}`\n"
+                resposta = f"✓ Guardado\n\n{mundo}\n📁 `{categoria}/`\n📄 `{p.name}`\n"
                 if r.get("lyra_synced"):
                     resposta += "↗ Enviado para Lyra\n"
-                resposta += "\n"
 
         elif tipo == "pergunta":
             resposta = f"🔍 {resultado['resultado']}"
