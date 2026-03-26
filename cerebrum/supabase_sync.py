@@ -215,43 +215,23 @@ def sync_para_supabase(client_anthropic: anthropic.Anthropic, conteudo_md: str, 
 # Lyra — content_pieces
 # ---------------------------------------------------------------------------
 
-def _mapear_canal(categoria: str, conteudo: str) -> tuple[str, str | None]:
-    """Mapeia categoria Cerebrum → canal/sub-agente Lyra."""
-    conteudo_lower = conteudo.lower()
-
-    if categoria == "youtube":
-        return "reel", "reels"
-
-    # instagram — detectar formato pelo conteúdo
-    if "reel" in conteudo_lower or "formato: reel" in conteudo_lower:
-        return "reel", "reels"
-
-    return "carousel", "carrosseis"
-
-
 def sync_content_piece(
     titulo: str,
     brief: str,
-    channel: str,
-    sub_agent: str | None,
     nota_path: str,
     categoria: str,
-    copy_preview: str | None = None,
-    slides: int | None = None,
 ) -> dict:
-    """Insere uma peça de conteúdo na fila da Lyra (content_pieces)."""
-    sb = get_supabase_client()
+    """Insere uma ideia de conteúdo na fila da Lyra (content_pieces).
 
-    status = "review" if copy_preview else "producing"
+    Cria com status 'idea' — sem canal nem sub_agent.
+    O Ricardo decide depois o formato e quando produzir.
+    """
+    sb = get_supabase_client()
 
     data = {
         "title": titulo[:200],
-        "channel": channel,
-        "status": status,
-        "sub_agent": sub_agent,
+        "status": "idea",
         "brief": brief[:5000] if brief else None,
-        "copy_preview": copy_preview,
-        "slides": slides,
         "source": "cerebrum",
         "cerebrum_nota_path": nota_path,
         "cerebrum_categoria": categoria,

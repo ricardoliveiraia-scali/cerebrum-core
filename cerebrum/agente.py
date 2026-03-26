@@ -231,22 +231,19 @@ def processar(texto: str, contexto: str = "", verbose: bool = False) -> list[dic
         except Exception:
             pass
 
-        # 6. Se for conteúdo (instagram/youtube), sync para Lyra
-        if chave in ("instagram", "youtube"):
+        # 6. Marca pessoal → enviar ideia para Lyra (Agency OS decide o resto)
+        if categoria.get("destino") != "supabase":
             try:
-                from .supabase_sync import sync_content_piece, _mapear_canal
-                channel, sub_agent = _mapear_canal(chave, conteudo)
+                from .supabase_sync import sync_content_piece
                 sync_content_piece(
                     titulo=titulo,
                     brief=texto,
-                    channel=channel,
-                    sub_agent=sub_agent,
                     nota_path=caminho,
                     categoria=chave,
                 )
                 resultado["lyra_synced"] = True
                 if verbose:
-                    print(f"  ↗ Lyra: {channel}")
+                    print(f"  ↗ Lyra: ideia criada")
             except Exception as e:
                 if verbose:
                     print(f"  ⚠ Lyra: {e}")
