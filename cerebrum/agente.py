@@ -42,15 +42,12 @@ Responde APENAS com JSON válido neste formato:
   "categoria": "<chave_principal>",
   "titulo": "<título curto que soa natural, máximo 60 chars>",
   "confianca": "<alta/media/baixa>",
-  "justificacao": "<1 frase>",
-  "multiplas": ["<categoria1>"]
+  "justificacao": "<1 frase>"
 }}
 
-Regras para o campo "multiplas":
-- Por defeito tem APENAS 1 categoria — a principal.
-- Só usa 2 categorias se o conteúdo for EXPLICITAMENTE sobre os dois temas (ex: uma reflexão pessoal que o Ricardo diz claramente que quer usar no Instagram).
-- NUNCA uses mais de 2 categorias.
-- NUNCA mistures marca-pessoal com agency-os na mesma nota. São mundos separados.
+Regras:
+- Escolhe APENAS 1 categoria — a mais relevante.
+- NUNCA mistures marca-pessoal com agency-os. São mundos separados.
 - agency-os só recebe: clientes, projetos, reunioes, financeiro — apenas quando o input é claramente operacional da agência.
 - marca-pessoal recebe tudo o resto: pensamentos, ideias de conteúdo, IA, jornada de empreendedor.
 - Em caso de dúvida usa "inbox".
@@ -186,74 +183,69 @@ def processar(texto: str, contexto: str = "", verbose: bool = False) -> list[dic
     # 1. Classificar
     classificacao = classificar(client, texto, contexto=contexto)
     titulo = classificacao.get("titulo", f"nota-{date.today().isoformat()}")
-    multiplas = classificacao.get("multiplas", [classificacao.get("categoria", "inbox")])
+    chave = classificacao.get("categoria", "inbox")
+    categoria = CATEGORIAS.get(chave, CATEGORIAS["inbox"])
 
     if verbose:
-        print(f"→ Categorias:  {', '.join(multiplas)}")
+        print(f"→ Categoria:   {chave}")
         print(f"→ Título:      {titulo}")
         print(f"→ Confiança:   {classificacao.get('confianca', '?')}")
         print(f"→ Motivo:      {classificacao.get('justificacao', '')}")
         print()
 
-    resultados = []
-    for chave in multiplas:
-        categoria = CATEGORIAS.get(chave, CATEGORIAS["inbox"])
+    # 2. Estruturar
+    conteudo = estruturar(client, texto, categoria, titulo)
 
-        # 2. Estruturar
-        conteudo = estruturar(client, texto, categoria, titulo)
+    # 3. Guardar no vault (sempre)
+    caminho = guardar(conteudo, categoria["pasta"], titulo)
 
-        # 3. Guardar no vault (sempre — serve de backup)
-        caminho = guardar(conteudo, categoria["pasta"], titulo)
+    resultado = {
+        "caminho": caminho,
+        "categoria": chave,
+        "destino": categoria.get("destino", "vault"),
+        "supabase_synced": False,
+    }
 
-        resultado = {
-            "caminho": caminho,
-            "categoria": chave,
-            "destino": categoria.get("destino", "vault"),
-            "supabase_synced": False,
-        }
-
-        # 4. Sync para Supabase (se for agency-os)
-        if categoria.get("destino") == "supabase" and categoria.get("tabela"):
-            try:
-                from .supabase_sync import sync_para_supabase
-                sync_para_supabase(client, conteudo, categoria["tabela"])
-                resultado["supabase_synced"] = True
-                if verbose:
-                    print(f"  ↗ Synced: {categoria['tabela']}")
-            except Exception as e:
-                if verbose:
-                    print(f"  ⚠ Supabase: {e}")
-
-        # 5. Guardar embedding para pesquisa semântica
+    # 4. Sync para Supabase (se for agency-os)
+    if categoria.get("destino") == "supabase" and categoria.get("tabela"):
         try:
-            from .embeddings import guardar_embedding
-            guardar_embedding(caminho, chave, conteudo)
-        except Exception:
-            pass
+            from .supabase_sync import sync_para_supabase
+            sync_para_supabase(client, conteudo, categoria["tabela"])
+            resultado["supabase_synced"] = True
+            if verbose:
+                print(f"  ↗ Synced: {categoria['tabela']}")
+        except Exception as e:
+            if verbose:
+                print(f"  ⚠ Supabase: {e}")
 
-        # 6. Marca pessoal → enviar ideia para Lyra (Agency OS decide o resto)
-        if categoria.get("destino") != "supabase":
-            try:
-                from .supabase_sync import sync_content_piece
-                sync_content_piece(
-                    titulo=titulo,
-                    brief=texto,
-                    nota_path=caminho,
-                    categoria=chave,
-                )
-                resultado["lyra_synced"] = True
-                if verbose:
-                    print(f"  ↗ Lyra: ideia criada")
-            except Exception as e:
-                if verbose:
-                    print(f"  ⚠ Lyra: {e}")
+    # 5. Guardar embedding para pesquisa semântica
+    try:
+        from .embeddings import guardar_embedding
+        guardar_embedding(caminho, chave, conteudo)
+    except Exception:
+        pass
 
-        resultados.append(resultado)
+    # 6. Marca pessoal → enviar ideia para Lyra
+    if categoria.get("destino") != "supabase":
+        try:
+            from .supabase_sync import sync_content_piece
+            sync_content_piece(
+                titulo=titulo,
+                brief=texto,
+                nota_path=caminho,
+                categoria=chave,
+            )
+            resultado["lyra_synced"] = True
+            if verbose:
+                print(f"  ↗ Lyra: ideia criada")
+        except Exception as e:
+            if verbose:
+                print(f"  ⚠ Lyra: {e}")
 
-        if verbose:
-            print(f"✓ Guardado: {caminho}")
+    if verbose:
+        print(f"✓ Guardado: {caminho}")
 
-    return resultados
+    return [resultado]
 
 
 def processar_com_intencao(texto: str, contexto: str = "", verbose: bool = False) -> dict:
