@@ -247,9 +247,8 @@ def _guardar_nota(client: anthropic.Anthropic, texto: str, triagem: dict,
     except Exception:
         pass
 
-    # 6. Marca pessoal → enviar ideia para Lyra
-    if categoria.get("destino") != "supabase":
-        try:
+    # 6. Enviar ideia para Lyra (todas as notas — curadoria é do Ricardo)
+    try:
             from .supabase_sync import sync_content_piece
             sync_content_piece(
                 titulo=titulo,
