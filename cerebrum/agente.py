@@ -249,19 +249,19 @@ def _guardar_nota(client: anthropic.Anthropic, texto: str, triagem: dict,
 
     # 6. Enviar ideia para Lyra (todas as notas — curadoria é do Ricardo)
     try:
-            from .supabase_sync import sync_content_piece
-            sync_content_piece(
-                titulo=titulo,
-                brief=texto,
-                nota_path=caminho,
-                categoria=chave,
-            )
-            resultado["lyra_synced"] = True
-            if verbose:
-                print(f"  ↗ Lyra: ideia criada")
-        except Exception as e:
-            if verbose:
-                print(f"  ⚠ Lyra: {e}")
+        from .supabase_sync import sync_content_piece
+        sync_content_piece(
+            titulo=titulo,
+            brief=texto,
+            nota_path=caminho,
+            categoria=chave,
+        )
+        resultado["lyra_synced"] = True
+        if verbose:
+            print(f"  ↗ Lyra: ideia criada")
+    except Exception as e:
+        if verbose:
+            print(f"  ⚠ Lyra: {e}")
 
     if verbose:
         print(f"✓ Guardado: {caminho}")

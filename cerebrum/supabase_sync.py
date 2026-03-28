@@ -239,7 +239,7 @@ def sync_content_piece(
 
     try:
         result = sb.table("content_pieces").insert(data).execute()
-        log.info(f"Content piece criada: {titulo} ({channel}, {status})")
+        log.info(f"Content piece criada: {titulo} (idea)")
         return result.data[0] if result.data else {}
     except Exception as e:
         log.error(f"Erro ao criar content piece: {e}")
