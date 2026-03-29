@@ -53,13 +53,9 @@ SESSAO: dict[int, list[dict]] = {}
 # Transcrição via API Whisper (OpenAI) — leve, sem PyTorch
 # ---------------------------------------------------------------------------
 
-async def transcrever_audio_api(caminho: str) -> str:
-    """Transcreve áudio via Anthropic/OpenAI Whisper API (HTTP)."""
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY não definida — transcrição por API indisponível.")
-
-    async with httpx.AsyncClient(timeout=300) as client:
+async def _transcrever_ficheiro(caminho: str, api_key: str) -> str:
+    """Transcreve um único ficheiro via Whisper API."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=180, write=60, pool=10)) as client:
         with open(caminho, "rb") as f:
             resp = await client.post(
                 "https://api.openai.com/v1/audio/transcriptions",
@@ -70,6 +66,63 @@ async def transcrever_audio_api(caminho: str) -> str:
         if resp.status_code != 200:
             raise RuntimeError(f"Whisper API erro {resp.status_code}: {resp.text}")
         return resp.json().get("text", "").strip()
+
+
+def _partir_audio(caminho: str, duracao_max: int = 120) -> list[str]:
+    """Parte áudio em chunks usando ffmpeg. Retorna lista de caminhos temporários."""
+    import subprocess
+    chunks = []
+    pasta = os.path.dirname(caminho)
+    ext = Path(caminho).suffix
+
+    # Obter duração total
+    result = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "csv=p=0", caminho],
+        capture_output=True, text=True
+    )
+    try:
+        duracao_total = float(result.stdout.strip())
+    except ValueError:
+        return [caminho]  # fallback: retornar original
+
+    if duracao_total <= duracao_max:
+        return [caminho]  # não precisa de partir
+
+    # Partir em segmentos
+    n = 0
+    inicio = 0
+    while inicio < duracao_total:
+        saida = os.path.join(pasta, f"chunk_{n}{ext}")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", caminho, "-ss", str(inicio),
+             "-t", str(duracao_max), "-c", "copy", saida],
+            capture_output=True
+        )
+        chunks.append(saida)
+        inicio += duracao_max
+        n += 1
+
+    return chunks
+
+
+async def transcrever_audio_api(caminho: str) -> str:
+    """Transcreve áudio via Whisper API. Parte automaticamente áudios longos."""
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY não definida — transcrição por API indisponível.")
+
+    chunks = _partir_audio(caminho, duracao_max=120)
+    transcricoes = []
+
+    for chunk in chunks:
+        texto = await _transcrever_ficheiro(chunk, api_key)
+        transcricoes.append(texto)
+        # Limpar chunk temporário (mas não o original)
+        if chunk != caminho and os.path.exists(chunk):
+            os.unlink(chunk)
+
+    return " ".join(transcricoes).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -280,9 +333,8 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_texto))
 
-    # Resumo diário às 21h (UTC+0 — ajustar se necessário)
+    # Resumo diário às 21h (UTC+0)
     if ALLOWED_USER_IDS:
-        from telegram.ext import JobQueue
         import datetime
         app.job_queue.run_daily(
             enviar_resumo_diario,
@@ -291,8 +343,21 @@ def main():
         )
         log.info("Resumo diário agendado para 21:00.")
 
-    log.info("Cerebrum bot ativo.")
-    app.run_polling()
+    # Webhook (Railway) ou polling (local)
+    webhook_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    if webhook_domain:
+        webhook_url = f"https://{webhook_domain}/webhook"
+        port = int(os.environ.get("PORT", 8443))
+        log.info(f"Cerebrum bot ativo (webhook: {webhook_url})")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            webhook_url=webhook_url,
+            url_path="/webhook",
+        )
+    else:
+        log.info("Cerebrum bot ativo (polling — modo local).")
+        app.run_polling()
 
 
 if __name__ == "__main__":
