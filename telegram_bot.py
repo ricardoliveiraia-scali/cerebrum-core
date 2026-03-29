@@ -59,7 +59,7 @@ async def transcrever_audio_api(caminho: str) -> str:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY não definida — transcrição por API indisponível.")
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=300) as client:
         with open(caminho, "rb") as f:
             resp = await client.post(
                 "https://api.openai.com/v1/audio/transcriptions",
@@ -152,7 +152,7 @@ async def handle_voz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caminho_audio = tmp.name
     try:
         transcricao = await transcrever_audio_api(caminho_audio)
-    except RuntimeError as e:
+    except Exception as e:
         await msg.edit_text(f"Erro na transcrição: {e}")
         return
     finally:
