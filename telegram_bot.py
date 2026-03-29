@@ -141,32 +141,44 @@ async def handle_voz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not autorizado(update):
         return
     msg = await update.message.reply_text("A transcrever...")
+    caminho_audio = None
 
-    voice = update.message.voice or update.message.audio
-    transcricao = None
-
-    # Descarrega o áudio e transcreve via API
-    ficheiro = await context.bot.get_file(voice.file_id)
-    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
-        await ficheiro.download_to_drive(tmp.name)
-        caminho_audio = tmp.name
     try:
+        voice = update.message.voice or update.message.audio
+        duracao = getattr(voice, "duration", 0) or 0
+        log.info(f"Áudio recebido: {duracao}s, file_id={voice.file_id}")
+
+        # Descarrega o áudio
+        ficheiro = await context.bot.get_file(voice.file_id)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            await ficheiro.download_to_drive(tmp.name)
+            caminho_audio = tmp.name
+
+        tamanho = os.path.getsize(caminho_audio)
+        log.info(f"Áudio descarregado: {tamanho} bytes")
+
+        # Transcreve via Whisper API
         transcricao = await transcrever_audio_api(caminho_audio)
+
+        if not transcricao or not transcricao.strip():
+            await msg.edit_text("Não consegui perceber o áudio. Tenta de novo.")
+            return
+
+        try:
+            await msg.edit_text(f"Transcrito:\n\n_{transcricao}_\n\nA processar...", parse_mode="Markdown")
+        except Exception:
+            await msg.edit_text(f"Transcrito:\n\n{transcricao}\n\nA processar...")
+        await _processar_e_responder(update, msg, transcricao)
+
     except Exception as e:
-        await msg.edit_text(f"Erro na transcrição: {e}")
-        return
+        log.exception("Erro no handler de voz")
+        try:
+            await msg.edit_text(f"Erro: {e}")
+        except Exception:
+            pass
     finally:
-        os.unlink(caminho_audio)
-
-    if not transcricao or not transcricao.strip():
-        await msg.edit_text("Não consegui perceber o áudio. Tenta de novo.")
-        return
-
-    try:
-        await msg.edit_text(f"Transcrito:\n\n_{transcricao}_\n\nA processar...", parse_mode="Markdown")
-    except Exception:
-        await msg.edit_text(f"Transcrito:\n\n{transcricao}\n\nA processar...")
-    await _processar_e_responder(update, msg, transcricao)
+        if caminho_audio and os.path.exists(caminho_audio):
+            os.unlink(caminho_audio)
 
 
 async def handle_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
