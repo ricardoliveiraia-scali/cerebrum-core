@@ -154,8 +154,8 @@ def guardar_sessao(chat_id: int, role: str, texto: str):
         sb.table("bot_sessions").insert({
             "chat_id": chat_id, "role": role, "texto": texto[:2000],
         }).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"bot_sessions insert: {e}")
 
 
 def obter_contexto_sessao(chat_id: int) -> str:
@@ -167,7 +167,8 @@ def obter_contexto_sessao(chat_id: int) -> str:
                 "chat_id", chat_id
             ).order("created_at", desc=True).limit(20).execute()
             SESSAO[chat_id] = [{"role": r["role"], "texto": r["texto"]} for r in reversed(rows.data)]
-        except Exception:
+        except Exception as e:
+            log.warning(f"bot_sessions load: {e}")
             SESSAO[chat_id] = []
 
     msgs = SESSAO.get(chat_id, [])
@@ -228,8 +229,8 @@ async def handle_voz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.exception("Erro no handler de voz")
         try:
             await msg.edit_text(f"Erro: {e}")
-        except Exception:
-            pass
+        except Exception as e2:
+            log.warning(f"edit_text erro final: {e2}")
     finally:
         if caminho_audio and os.path.exists(caminho_audio):
             os.unlink(caminho_audio)

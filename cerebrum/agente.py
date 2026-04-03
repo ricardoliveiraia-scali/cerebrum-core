@@ -6,11 +6,12 @@ Lógica principal do Cerebrum — classificar, estruturar, guardar e sincronizar
 import os
 import re
 import json
+import logging
 import anthropic
 from datetime import date
 from .categorias import CATEGORIAS
 
-VAULT_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vault")
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """És o Cerebrum — o cérebro pessoal de Ricardo.
 O teu trabalho é receber notas em bruto (faladas ou escritas) e transformá-las em conteúdo estruturado.
@@ -151,18 +152,10 @@ def estruturar(client: anthropic.Anthropic, texto: str, categoria: dict, titulo:
 
 
 def guardar(conteudo: str, pasta: str, titulo: str, categoria: str = "inbox") -> str:
-    destino = os.path.join(VAULT_ROOT, pasta)
-    os.makedirs(destino, exist_ok=True)
-
     slug = re.sub(r'[^\w\s-]', '', titulo.lower())
     slug = re.sub(r'[\s]+', '-', slug).strip('-')[:50]
-    nome = f"{date.today().isoformat()}-{slug}.md"
-    caminho = os.path.join(destino, nome)
+    caminho = f"{pasta}/{date.today().isoformat()}-{slug}.md"
 
-    with open(caminho, "w", encoding="utf-8") as f:
-        f.write(conteudo)
-
-    # Persistir no Supabase (vault local é efémero no Railway)
     try:
         from .supabase_sync import get_supabase_client
         sb = get_supabase_client()
@@ -172,8 +165,8 @@ def guardar(conteudo: str, pasta: str, titulo: str, categoria: str = "inbox") ->
             "titulo": titulo,
             "conteudo": conteudo,
         }).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"vault_notes insert falhou: {e}")
 
     return caminho
 
@@ -186,8 +179,8 @@ def _guardar_nota(client: anthropic.Anthropic, texto: str, triagem: dict,
     try:
         from .perfil_voz import atualizar_perfil
         atualizar_perfil(client, texto)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"perfil_voz: {e}")
 
     titulo = triagem.get("titulo", f"nota-{date.today().isoformat()}")
     chave = triagem.get("categoria", "inbox")
@@ -212,8 +205,8 @@ def _guardar_nota(client: anthropic.Anthropic, texto: str, triagem: dict,
             if verbose:
                 print(f"⚠ Duplicado: já existe nota '{titulo}' de hoje")
             return [{"caminho": "", "categoria": chave, "destino": "duplicado", "supabase_synced": False}]
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"verificação de duplicado: {e}")
 
     # 2. Estruturar
     conteudo = estruturar(client, texto, categoria, titulo)
@@ -244,8 +237,8 @@ def _guardar_nota(client: anthropic.Anthropic, texto: str, triagem: dict,
     try:
         from .embeddings import guardar_embedding
         guardar_embedding(caminho, chave, conteudo)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"embeddings: {e}")
 
     # 6. Enviar ideia para Lyra (todas as notas — curadoria é do Ricardo)
     try:
@@ -260,6 +253,7 @@ def _guardar_nota(client: anthropic.Anthropic, texto: str, triagem: dict,
         if verbose:
             print(f"  ↗ Lyra: ideia criada")
     except Exception as e:
+        log.warning(f"Lyra sync: {e}")
         if verbose:
             print(f"  ⚠ Lyra: {e}")
 
