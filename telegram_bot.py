@@ -217,10 +217,11 @@ async def handle_voz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text("Não consegui perceber o áudio. Tenta de novo.")
             return
 
+        preview = transcricao[:300] + ("…" if len(transcricao) > 300 else "")
         try:
-            await msg.edit_text(f"Transcrito:\n\n_{transcricao}_\n\nA processar...", parse_mode="Markdown")
+            await msg.edit_text(f"Transcrito:\n\n_{preview}_\n\nA processar...", parse_mode="Markdown")
         except Exception:
-            await msg.edit_text(f"Transcrito:\n\n{transcricao}\n\nA processar...")
+            await msg.edit_text(f"Transcrito:\n\n{preview}\n\nA processar...")
         await _processar_e_responder(update, msg, transcricao)
 
     except Exception as e:
