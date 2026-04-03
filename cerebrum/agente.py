@@ -175,12 +175,14 @@ def _guardar_nota(client: anthropic.Anthropic, texto: str, triagem: dict,
                    contexto: str = "", verbose: bool = False) -> list[dict]:
     """Estrutura, guarda e sincroniza uma nota já triada."""
 
-    # 0. Atualizar perfil de voz
-    try:
-        from .perfil_voz import atualizar_perfil
-        atualizar_perfil(client, texto)
-    except Exception as e:
-        log.warning(f"perfil_voz: {e}")
+    # 0. Atualizar perfil de voz (só marca pessoal — não faz sentido para agency-os)
+    from .categorias import MARCA_PESSOAL
+    if chave in MARCA_PESSOAL:
+        try:
+            from .perfil_voz import atualizar_perfil
+            atualizar_perfil(client, texto)
+        except Exception as e:
+            log.warning(f"perfil_voz: {e}")
 
     titulo = triagem.get("titulo", f"nota-{date.today().isoformat()}")
     chave = triagem.get("categoria", "inbox")

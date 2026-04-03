@@ -1,20 +1,22 @@
 """
 Perfil de Voz — aprende o tom e estilo do Ricardo ao longo do tempo.
+Persistido no Supabase (tabela voice_profile).
 
-Analisa cada nota recebida e vai construindo um perfil que depois
-é injetado nos prompts de geração de conteúdo (Instagram, YouTube).
+SQL necessário no Supabase:
+    CREATE TABLE IF NOT EXISTS voice_profile (
+        id INT DEFAULT 1 PRIMARY KEY,
+        perfil JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
 """
 
-import os
 import re
 import json
+import logging
 import anthropic
 from datetime import date
 
-PERFIL_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "vault", "perfil-voz.json"
-)
+log = logging.getLogger(__name__)
 
 PERFIL_DEFAULT = {
     "ultima_atualizacao": None,
@@ -53,16 +55,27 @@ Responde com JSON:
 
 
 def carregar_perfil() -> dict:
-    if os.path.exists(PERFIL_PATH):
-        with open(PERFIL_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+    try:
+        from .supabase_sync import get_supabase_client
+        sb = get_supabase_client()
+        resultado = sb.table("voice_profile").select("perfil").eq("id", 1).limit(1).execute()
+        if resultado.data:
+            return resultado.data[0]["perfil"]
+    except Exception as e:
+        log.warning(f"voice_profile load: {e}")
     return PERFIL_DEFAULT.copy()
 
 
 def guardar_perfil(perfil: dict):
-    os.makedirs(os.path.dirname(PERFIL_PATH), exist_ok=True)
-    with open(PERFIL_PATH, "w", encoding="utf-8") as f:
-        json.dump(perfil, f, ensure_ascii=False, indent=2)
+    try:
+        from .supabase_sync import get_supabase_client
+        sb = get_supabase_client()
+        sb.table("voice_profile").upsert(
+            {"id": 1, "perfil": perfil},
+            on_conflict="id",
+        ).execute()
+    except Exception as e:
+        log.warning(f"voice_profile save: {e}")
 
 
 def atualizar_perfil(client: anthropic.Anthropic, texto_original: str):
