@@ -257,8 +257,9 @@ async def handle_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _processar_e_responder(update: Update, msg, texto: str):
     try:
+        import asyncio
         contexto = obter_contexto_sessao(update.effective_chat.id)
-        resultado = processar_com_intencao(texto, contexto=contexto, verbose=False)
+        resultado = await asyncio.to_thread(processar_com_intencao, texto, contexto=contexto, verbose=False)
         tipo = resultado["tipo"]
 
         if tipo == "guardar":
@@ -300,28 +301,6 @@ async def _processar_e_responder(update: Update, msg, texto: str):
 
 
 # ---------------------------------------------------------------------------
-# Resumo diário
-# ---------------------------------------------------------------------------
-
-async def enviar_resumo_diario(context: ContextTypes.DEFAULT_TYPE):
-    """Envia resumo do dia às 21h para todos os utilizadores autorizados."""
-    from cerebrum.resumo import gerar_resumo_diario
-
-    try:
-        resumo = gerar_resumo_diario()
-        if not resumo:
-            return
-
-        for uid in ALLOWED_USER_IDS:
-            try:
-                await context.bot.send_message(chat_id=uid, text=resumo, parse_mode="Markdown")
-            except Exception as e:
-                log.warning(f"Não consegui enviar resumo para {uid}: {e}")
-    except Exception as e:
-        log.exception(f"Erro no resumo diário: {e}")
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -340,16 +319,6 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voz))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_texto))
-
-    # Resumo diário às 21h (UTC+0)
-    if ALLOWED_USER_IDS:
-        import datetime
-        app.job_queue.run_daily(
-            enviar_resumo_diario,
-            time=datetime.time(hour=21, minute=0),
-            name="resumo_diario",
-        )
-        log.info("Resumo diário agendado para 21:00.")
 
     # Webhook (Railway) ou polling (local)
     webhook_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
