@@ -217,6 +217,12 @@ async def handle_voz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tamanho = os.path.getsize(caminho_audio)
         log.info(f"Áudio descarregado: {tamanho} bytes")
 
+        # Feedback para áudios longos
+        if duracao > 120:
+            import math
+            n_chunks = math.ceil(duracao / 120)
+            await msg.edit_text(f"A transcrever áudio ({n_chunks} partes em paralelo)...")
+
         # Transcreve via Whisper API
         transcricao = await transcrever_audio_api(caminho_audio)
 

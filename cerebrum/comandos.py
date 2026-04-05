@@ -225,18 +225,19 @@ def _obter_contexto_relevante(texto: str, limite: int = 5) -> str:
     except Exception:
         pass
 
-    # 2. Fallback: pesquisa por texto no vault
+    # 2. Fallback: pesquisa por keyword em vault_notes
     if not notas:
         try:
-            from .leitor import buscar
+            from .supabase_sync import get_supabase_client
+            sb = get_supabase_client()
             palavras = [p for p in texto.split() if len(p) > 3]
             for palavra in palavras[:3]:
-                resultados = buscar(texto=palavra, limite=limite)
-                if resultados:
-                    for r in resultados:
-                        categoria = r.get("categoria", "?")
-                        conteudo = r.get("conteudo", "")[:400]
-                        notas.append(f"[{categoria}] {conteudo}")
+                r = sb.table("vault_notes").select("categoria,conteudo").ilike(
+                    "conteudo", f"%{palavra}%"
+                ).limit(limite).execute()
+                if r.data:
+                    for row in r.data:
+                        notas.append(f"[{row.get('categoria', '?')}] {row.get('conteudo', '')[:400]}")
                     break
         except Exception:
             pass
@@ -353,18 +354,19 @@ def _skill_proposta(client: anthropic.Anthropic, texto: str) -> str:
 
 
 def _skill_resumo(client: anthropic.Anthropic, texto: str) -> str:
-    # Buscar notas recentes
-    from .leitor import listar, ler
-    notas_recentes = listar(limite=20)
+    # Buscar notas recentes do Supabase
     conteudos = []
-    for n in notas_recentes:
-        conteudos.append(f"[{n['categoria']}] {ler(n['caminho'])[:300]}")
-
-    # Buscar dados do Supabase
     dados_supabase = ""
     try:
         from .supabase_sync import get_supabase_client
         sb = get_supabase_client()
+
+        notas = sb.table("vault_notes").select("categoria,conteudo").order(
+            "created_at", desc=True
+        ).limit(20).execute()
+        for n in (notas.data or []):
+            conteudos.append(f"[{n.get('categoria', '?')}] {n.get('conteudo', '')[:300]}")
+
         for tabela in ["clients", "projects", "meetings", "quotes"]:
             try:
                 resultado = sb.table(tabela).select("*").limit(20).execute()

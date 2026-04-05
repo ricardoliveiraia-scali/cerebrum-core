@@ -14,26 +14,27 @@ from cerebrum.agente import processar_com_intencao
 
 
 def backfill_embeddings():
-    """Gera embeddings para todas as notas existentes no vault."""
-    from cerebrum.leitor import listar, ler
+    """Gera embeddings para todas as notas em vault_notes (Supabase)."""
+    from cerebrum.supabase_sync import get_supabase_client
     from cerebrum.embeddings import guardar_embedding
 
-    notas = listar(limite=500)
+    sb = get_supabase_client()
+    resultado = sb.table("vault_notes").select("path,categoria,conteudo").execute()
+    notas = resultado.data or []
     total = len(notas)
     sucesso = 0
     falha = 0
 
-    print(f"Backfill: {total} notas encontradas no vault.")
+    print(f"Backfill: {total} notas encontradas no Supabase.")
 
     for i, nota in enumerate(notas, 1):
         try:
-            conteudo = ler(nota["caminho"])
-            guardar_embedding(nota["caminho"], nota["categoria"], conteudo)
+            guardar_embedding(nota["path"], nota["categoria"], nota["conteudo"])
             sucesso += 1
-            print(f"  [{i}/{total}] ✓ {nota['ficheiro']}")
+            print(f"  [{i}/{total}] ✓ {nota['path']}")
         except Exception as e:
             falha += 1
-            print(f"  [{i}/{total}] ✗ {nota['ficheiro']}: {e}")
+            print(f"  [{i}/{total}] ✗ {nota['path']}: {e}")
 
     print(f"\nBackfill completo: {sucesso} ok, {falha} erros.")
 
