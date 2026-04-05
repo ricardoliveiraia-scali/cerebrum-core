@@ -84,6 +84,7 @@ def _partir_audio(caminho: str, duracao_max: int = 120) -> list[str]:
     try:
         duracao_total = float(result.stdout.strip())
     except ValueError:
+        log.warning("ffprobe não conseguiu ler duração — a usar ficheiro original")
         return [caminho]  # fallback: retornar original
 
     if duracao_total <= duracao_max:
@@ -94,11 +95,15 @@ def _partir_audio(caminho: str, duracao_max: int = 120) -> list[str]:
     inicio = 0
     while inicio < duracao_total:
         saida = os.path.join(pasta, f"chunk_{n}{ext}")
-        subprocess.run(
+        r = subprocess.run(
             ["ffmpeg", "-y", "-i", caminho, "-ss", str(inicio),
              "-t", str(duracao_max), "-c", "copy", saida],
             capture_output=True
         )
+        if r.returncode != 0:
+            raise RuntimeError(f"ffmpeg falhou no chunk {n}: {r.stderr.decode()[:200]}")
+        if not os.path.exists(saida) or os.path.getsize(saida) == 0:
+            raise RuntimeError(f"ffmpeg produziu chunk vazio: {saida}")
         chunks.append(saida)
         inicio += duracao_max
         n += 1
@@ -113,15 +118,16 @@ async def transcrever_audio_api(caminho: str) -> str:
         raise RuntimeError("OPENAI_API_KEY não definida — transcrição por API indisponível.")
 
     chunks = _partir_audio(caminho, duracao_max=120)
-    transcricoes = []
 
-    for chunk in chunks:
-        texto = await _transcrever_ficheiro(chunk, api_key)
-        transcricoes.append(texto)
-        # Limpar chunk temporário (mas não o original)
-        if chunk != caminho and os.path.exists(chunk):
-            os.unlink(chunk)
+    async def transcrever_e_limpar(chunk: str) -> str:
+        try:
+            return await _transcrever_ficheiro(chunk, api_key)
+        finally:
+            if chunk != caminho and os.path.exists(chunk):
+                os.unlink(chunk)
 
+    import asyncio
+    transcricoes = await asyncio.gather(*[transcrever_e_limpar(c) for c in chunks])
     return " ".join(transcricoes).strip()
 
 
